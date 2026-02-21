@@ -5,6 +5,7 @@
 //  Created by BitDegree on 21/02/26.
 //
 
+
 import SwiftUI
 import CoreData
 
@@ -16,16 +17,18 @@ struct DraggablePersonNode: View {
     var scale: CGFloat
     var color: Color
     var isConnecting: Bool
-    var isSelectedSource: Bool // Is this the parent we are trying to link from?
+    var isSelectedSource: Bool
     
     // Callbacks
     var onSelect: () -> Void
-    var onDelete: () -> Void // For Context Menu Deletion
+    var onDelete: () -> Void
     
     @Environment(\.managedObjectContext) var viewContext
-    
-    // Internal State for drag calculation
     @State private var dragOffset: CGSize = .zero
+    
+    var hasPartner: Bool {
+        return (person.partners as? Set<Person> ?? []).count > 0
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -68,15 +71,10 @@ struct DraggablePersonNode: View {
                   y: person.yPosition + dragOffset.height)
         
         // Interactions
-        .onTapGesture {
-            onSelect()
-        }
+        .onTapGesture { onSelect() }
         .contextMenu {
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("Delete Person", systemImage: "trash")
-            }
+            Button(role: .destructive) { onDelete() } label: { Label("Delete Person", systemImage: "trash") }
+            // Placeholder for Partner Linking (Will be added in TreeCanvasView)
         }
         // Gesture: Disable drag when in connecting mode
         .gesture(
@@ -97,7 +95,7 @@ struct DraggablePersonNode: View {
     }
 }
 
-// 2. Bezier Connector
+// 2. Bezier Connector with ARROWHEAD
 struct CurvedConnector: Shape {
     var start: CGPoint
     var end: CGPoint
@@ -112,22 +110,32 @@ struct CurvedConnector: Shape {
         let control2 = CGPoint(x: end.x, y: end.y - deltaY)
         
         path.addCurve(to: end, control1: control1, control2: control2)
+        
+        // --- DRAW ARROWHEAD ---
+        let lineAngle = atan2(end.y - start.y, end.x - start.x)
+        
+        path.addLines([
+            end,
+            CGPoint(x: end.x - 15 * cos(lineAngle - .pi / 8), y: end.y - 15 * sin(lineAngle - .pi / 8)),
+            CGPoint(x: end.x - 15 * cos(lineAngle + .pi / 8), y: end.y - 15 * sin(lineAngle + .pi / 8)),
+            end
+        ])
+        // ----------------------
+        
         return path
     }
 }
 
-// 3. Grid Pattern Background
+// 3. Grid Pattern Background (Unchanged)
 struct GridPattern: Shape {
     let spacing: CGFloat = 50
     
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        // Vertical Lines
         for x in stride(from: 0, through: rect.maxX, by: spacing) {
             path.move(to: CGPoint(x: x, y: rect.minY))
             path.addLine(to: CGPoint(x: x, y: rect.maxY))
         }
-        // Horizontal Lines
         for y in stride(from: 0, through: rect.maxY, by: spacing) {
             path.move(to: CGPoint(x: rect.minX, y: y))
             path.addLine(to: CGPoint(x: rect.maxX, y: y))

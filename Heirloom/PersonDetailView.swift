@@ -16,17 +16,19 @@ struct PersonDetailView: View {
 
     // UI States
     @State private var inputName: String = ""
-    @State private var selectedTab = 0
     @State private var generationLevel: Int = 0
+    @State private var selectedTab = 0
+    
+    
+    @State private var showPhotoPicker = false
+
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // 1. Header View (Icon & Basic Info)
                 headerSection
                     .padding()
                 
-                // 2. Tab Picker
                 Picker("Tabs", selection: $selectedTab) {
                     Text("Info").tag(0)
                     Text("Gallery").tag(1)
@@ -37,17 +39,13 @@ struct PersonDetailView: View {
 
                 Divider().padding(.top, 8)
 
-                // 3. Main Content
                 TabView(selection: $selectedTab) {
-                    // TAB 0: Editing Form
                     infoFormView
                         .tag(0)
 
-                    // TAB 1: Photo Grid
                     GalleryGridView(person: person)
                         .tag(1)
 
-                    // TAB 2: PDF/Book List
                     DocumentsListView(person: person)
                         .tag(2)
                 }
@@ -64,19 +62,15 @@ struct PersonDetailView: View {
                 }
             }
             .onAppear {
-                // Initialize temp state from Core Data
                 inputName = person.name ?? ""
                 generationLevel = Int(person.generation)
             }
         }
     }
 
-    // MARK: - Extracted View Components
-    // (Keeps the main body simple so the compiler is fast)
-
+    // MARK: - Extracted Views
     private var headerSection: some View {
         HStack {
-            // Placeholder Avatar
             Circle()
                 .fill(Color.gray.opacity(0.2))
                 .frame(width: 80, height: 80)
@@ -98,9 +92,11 @@ struct PersonDetailView: View {
         Form {
             Section(header: Text("Life Events")) {
                 DatePicker("Birth Date", selection: dateBinding, displayedComponents: .date)
+                            
+                            // *** CHANGE THIS LINE ***
+                            DatePicker("Date of Death", selection: dateOfDeathBindingForPicker, displayedComponents: .date)
+                                .datePickerStyle(.compact)
                 
-                // --- NEW: GENERATION CONTROLLER ---
-                // Changes here effect the color on the tree
                 HStack {
                     Text("Generation Level")
                     Spacer()
@@ -111,62 +107,87 @@ struct PersonDetailView: View {
                 }
             }
             
-            Section(header: Text("Biography")) {
-                // Connects to 'desc' attribute in CoreData
-                TextEditor(text: bioBinding)
-                    .frame(height: 150)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                    )
+            // --- PARTNER MANAGEMENT SECTION ---
+            Section(header: Text("Partner/Spouse")) {
+                if let partner = person.partnersArray?.first {
+                    HStack {
+                        Text("Linked To:")
+                        NavigationLink(partner.name ?? "Unknown", destination: PersonDetailView(person: partner))
+                        Spacer()
+                        Button("Unlink", role: .destructive) { unlinkPartner(partner) }
+                    }
+                } else {
+                    Text("Use the 'Connect' mode on the Tree Canvas to link a Partner/Spouse.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             
-            Section(footer: Text("Set the Generation Level to automatically color-code this person on the main tree (e.g., Grandparents = 0, Parents = 1).")) {
-                EmptyView()
+            Section(header: Text("Biography")) {
+                TextEditor(text: bioBinding)
+                    .frame(height: 150)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2), lineWidth: 1))
             }
         }
     }
 
-    // MARK: - Helper Bindings
-    // (Solving dynamic lookup errors safely)
+    // MARK: - Helpers & Bindings
     
-    // 1. Safe Binding for Date
+    private var formattedBirthDate: String { person.dateOfBirth?.formatted(date: .abbreviated, time: .omitted) ?? "Unknown" }
+
     private var dateBinding: Binding<Date> {
         Binding<Date>(
-            get: { self.person.dateOfBirth ?? Date() },
-            set: { self.person.dateOfBirth = $0 }
+            get: { person.dateOfBirth ?? Date() },
+            set: { person.dateOfBirth = $0 }
         )
     }
-
-    // 2. Safe Binding for Biography (Description)
+    
+    private var deathDateBinding: Binding<Date?> { // <-- THIS IS CORRECT (Returns Optional)
+          Binding<Date?>(
+              get: { person.dateOfDeath },
+              set: { person.dateOfDeath = $0 }
+          )
+      }
+      
+      // ADD THIS NEW HELPER FUNCTION TO FIX THE ERROR:
+      private var dateOfDeathBindingForPicker: Binding<Date> {
+          Binding<Date>(
+              get: {
+                  // If person.dateOfDeath is nil, use now. This satisfies the non-optional requirement.
+                  return person.dateOfDeath ?? Date()
+              },
+              set: { newValue in
+                  // When the user changes the date, set the person's *optional* date to that new date.
+                  // If the user clears the date later, we need a way to set it to nil,
+                  // which requires more advanced UI or logic than a standard optional DatePicker.
+                  person.dateOfDeath = newValue
+              }
+          )
+      }
     private var bioBinding: Binding<String> {
         Binding<String>(
-            get: {
-                // Safely handle nil 'desc'
-                return self.person.desc ?? ""
-            },
-            set: { newValue in
-                self.person.desc = newValue
-            }
+            get: { return self.person.desc ?? "" },
+            set: { self.person.desc = $0 }
         )
     }
-
-    // 3. Display Logic
-    private var formattedBirthDate: String {
-        person.dateOfBirth?.formatted(date: .abbreviated, time: .omitted) ?? "Unknown"
+    
+    private func unlinkPartner(_ partner: Person) {
+        person.mutableSetValue(forKey: "partners").remove(partner)
+        partner.mutableSetValue(forKey: "partners").remove(person)
+        try? viewContext.save()
     }
 
-    // MARK: - Saving Logic
+    // MARK: - Saving
     private func saveChanges() {
-        // Commit UI State to Core Data Object
         person.name = inputName
         person.generation = Int16(generationLevel)
-        
-        // Save Context
-        do {
-            try viewContext.save()
-        } catch {
-            print("Error saving details: \(error.localizedDescription)")
-        }
+        try? viewContext.save()
+    }
+}
+
+// Extension to safely read partners array
+extension Person {
+    var partnersArray: [Person]? {
+        return partners?.allObjects as? [Person]
     }
 }
