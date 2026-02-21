@@ -17,8 +17,8 @@
         <attribute name="nodeColor" optional="YES" attributeType="String"/>
         <attribute name="xPosition" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
         <attribute name="yPosition" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
-        <relationship name="children" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Person" inverseName="parents" inverseEntity="Person"/>
+        <relationship name="children" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Person" inverseName="parents" inverseEntity="Person"/>
         <relationship name="memories" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Memory" inverseName="person" inverseEntity="Memory"/>
-        <relationship name="parents" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="Person" inverseName="children" inverseEntity="Person"/>
+        <relationship name="parents" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Person" inverseName="children" inverseEntity="Person"/>
     </entity>
 </model>
