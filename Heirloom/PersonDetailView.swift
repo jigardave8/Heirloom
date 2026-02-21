@@ -5,13 +5,6 @@
 //  Created by BitDegree on 13/02/26.
 //
 
-//
-//  PersonDetailView.swift
-//  Heirloom
-//
-//  Created by BitDegree on 13/02/26.
-//
-
 import SwiftUI
 import CoreData
 import PhotosUI
@@ -24,14 +17,12 @@ struct PersonDetailView: View {
     // UI States
     @State private var inputName: String = ""
     @State private var selectedTab = 0
-    
-    // Unused state removed for cleaner code if not strictly needed immediately
-    // @State private var inputImage: UIImage?
+    @State private var generationLevel: Int = 0
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // 1. Header View
+                // 1. Header View (Icon & Basic Info)
                 headerSection
                     .padding()
                 
@@ -48,12 +39,15 @@ struct PersonDetailView: View {
 
                 // 3. Main Content
                 TabView(selection: $selectedTab) {
+                    // TAB 0: Editing Form
                     infoFormView
                         .tag(0)
 
+                    // TAB 1: Photo Grid
                     GalleryGridView(person: person)
                         .tag(1)
 
+                    // TAB 2: PDF/Book List
                     DocumentsListView(person: person)
                         .tag(2)
                 }
@@ -70,19 +64,23 @@ struct PersonDetailView: View {
                 }
             }
             .onAppear {
+                // Initialize temp state from Core Data
                 inputName = person.name ?? ""
+                generationLevel = Int(person.generation)
             }
         }
     }
 
-    // MARK: - Extracted Views (Fixes Compiler Timing Out)
-    
+    // MARK: - Extracted View Components
+    // (Keeps the main body simple so the compiler is fast)
+
     private var headerSection: some View {
         HStack {
+            // Placeholder Avatar
             Circle()
                 .fill(Color.gray.opacity(0.2))
                 .frame(width: 80, height: 80)
-                .overlay(Image(systemName: "person.fill").font(.largeTitle))
+                .overlay(Image(systemName: "person.fill").font(.largeTitle).foregroundColor(.gray))
             
             VStack(alignment: .leading) {
                 TextField("Name", text: $inputName)
@@ -100,49 +98,75 @@ struct PersonDetailView: View {
         Form {
             Section(header: Text("Life Events")) {
                 DatePicker("Birth Date", selection: dateBinding, displayedComponents: .date)
+                
+                // --- NEW: GENERATION CONTROLLER ---
+                // Changes here effect the color on the tree
+                HStack {
+                    Text("Generation Level")
+                    Spacer()
+                    Stepper(value: $generationLevel, in: 0...20) {
+                        Text("\(generationLevel)")
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             
             Section(header: Text("Biography")) {
-                // Assumes your CoreData entity 'Person' has a 'desc' string attribute
-                // If it's named 'summary' or something else, change 'person.desc' below
+                // Connects to 'desc' attribute in CoreData
                 TextEditor(text: bioBinding)
                     .frame(height: 150)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                    )
+            }
+            
+            Section(footer: Text("Set the Generation Level to automatically color-code this person on the main tree (e.g., Grandparents = 0, Parents = 1).")) {
+                EmptyView()
             }
         }
     }
 
-    // MARK: - Helpers & Bindings
+    // MARK: - Helper Bindings
+    // (Solving dynamic lookup errors safely)
     
-    // Simplifies the date string calculation for the compiler
+    // 1. Safe Binding for Date
+    private var dateBinding: Binding<Date> {
+        Binding<Date>(
+            get: { self.person.dateOfBirth ?? Date() },
+            set: { self.person.dateOfBirth = $0 }
+        )
+    }
+
+    // 2. Safe Binding for Biography (Description)
+    private var bioBinding: Binding<String> {
+        Binding<String>(
+            get: {
+                // Safely handle nil 'desc'
+                return self.person.desc ?? ""
+            },
+            set: { newValue in
+                self.person.desc = newValue
+            }
+        )
+    }
+
+    // 3. Display Logic
     private var formattedBirthDate: String {
         person.dateOfBirth?.formatted(date: .abbreviated, time: .omitted) ?? "Unknown"
     }
 
-    // Moves the complex binding logic out of the body
-    private var dateBinding: Binding<Date> {
-        Binding(
-            get: { person.dateOfBirth ?? Date() },
-            set: { person.dateOfBirth = $0 }
-        )
-    }
-
-    // Corrected Binding Logic
-        private var bioBinding: Binding<String> {
-            Binding<String>(
-                get: {
-                    // Return empty string if desc is nil
-                    return self.person.desc ?? ""
-                },
-                set: { newValue in
-                    // Update the person object
-                    self.person.desc = newValue
-                }
-            )
-        }
-
+    // MARK: - Saving Logic
     private func saveChanges() {
+        // Commit UI State to Core Data Object
         person.name = inputName
-        // Note: Attribute changes like dateOfBirth are bound directly via the computed properties above
-        try? viewContext.save()
+        person.generation = Int16(generationLevel)
+        
+        // Save Context
+        do {
+            try viewContext.save()
+        } catch {
+            print("Error saving details: \(error.localizedDescription)")
+        }
     }
 }

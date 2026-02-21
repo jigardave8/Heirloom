@@ -10,100 +10,136 @@ import CoreData
 
 struct TreeCanvasView: View {
     @Environment(\.managedObjectContext) private var viewContext
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Person.name, ascending: true)],
-        animation: .default)
+    @FetchRequest(sortDescriptors: [NSSortDescriptor(keyPath: \Person.name, ascending: true)])
     private var people: FetchedResults<Person>
 
-    // Zoom and Pan States
+    // Canvas State
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
     
-    // Navigation for Detail View
+    // Interaction State
     @State private var selectedPerson: Person?
+    @StateObject private var genManager = GenerationManager.shared
+    @State private var showingGenSettings = false
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                // Background Pattern (Optional)
-                Color.init(uiColor: .systemGroupedBackground)
-                    .edgesIgnoringSafeArea(.all)
-                
-                // The Infinite Canvas
-                GeometryReader { proxy in
+            GeometryReader { proxy in
+                ZStack {
+                    // 1. Infinite Grid Background
+                    GridPattern()
+                        .stroke(Color.gray.opacity(0.15), lineWidth: 1)
+                        .offset(x: offset.width, y: offset.height)
+                        .scaleEffect(scale)
+                    
+                    // 2. The Interaction Layer
                     ZStack {
-                        // LAYER 1: Lines connecting families (To be implemented with Path)
-                        
-                        // LAYER 2: People Nodes
+                        // LAYER A: Connecting Lines (The Fix is Here)
                         ForEach(people) { person in
-                            PersonNodeView(person: person)
-                                .position(x: person.xPosition, y: person.yPosition)
-                                .onTapGesture {
-                                    selectedPerson = person
-                                }
-                                // Simple Drag logic to move nodes manually for now
-                                .gesture(
-                                    DragGesture()
-                                        .onChanged { value in
-                                            person.xPosition = value.location.x
-                                            person.yPosition = value.location.y
-                                        }
-                                        .onEnded { _ in
-                                            saveContext()
-                                        }
+                            // FIX: Safely convert 'parents' Set to an Array
+                            let parentsArray = (person.parents as? Set<Person> ?? [])
+                            
+                            ForEach(Array(parentsArray)) { parent in
+                                CurvedConnector(
+                                    start: CGPoint(x: parent.xPosition, y: parent.yPosition),
+                                    end: CGPoint(x: person.xPosition, y: person.yPosition)
                                 )
+                                .stroke(Color.gray.opacity(0.5), style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [5, 5]))
+                            }
+                        }
+                        
+                        // LAYER B: Person Nodes
+                        ForEach(people) { person in
+                            DraggablePersonNode(
+                                person: person,
+                                scale: scale,
+                                color: genManager.colorForGeneration(person.generation),
+                                onSelect: { selectedPerson = person }
+                            )
                         }
                     }
                     .scaleEffect(scale)
                     .offset(offset)
-                    // Zoom and Pan Gestures
-                    .gesture(
-                        SimultaneousGesture(
-                            MagnificationGesture()
-                                .onChanged { value in
-                                    let delta = value / lastScale
-                                    scale *= delta
-                                    lastScale = value
-                                }
-                                .onEnded { _ in lastScale = 1.0 },
-                            DragGesture()
-                                .onChanged { value in
-                                    let newOffset = CGSize(
-                                        width: lastOffset.width + value.translation.width,
-                                        height: lastOffset.height + value.translation.height
-                                    )
-                                    offset = newOffset
-                                }
-                                .onEnded { value in
-                                    lastOffset = offset
-                                }
-                        )
+                }
+                // 3. Canvas Gestures
+                .contentShape(Rectangle())
+                .gesture(
+                    SimultaneousGesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let delta = value / lastScale
+                                self.scale *= delta
+                                self.lastScale = value
+                            }
+                            .onEnded { _ in self.lastScale = 1.0 },
+                        
+                        DragGesture()
+                            .onChanged { value in
+                                let newOffset = CGSize(
+                                    width: lastOffset.width + value.translation.width,
+                                    height: lastOffset.height + value.translation.height
+                                )
+                                self.offset = newOffset
+                            }
+                            .onEnded { _ in self.lastOffset = self.offset }
                     )
+                )
+                // 4. Floating Tools
+                .overlay(alignment: .bottomTrailing) {
+                    HStack {
+                        Button(action: { showingGenSettings.toggle() }) {
+                            Image(systemName: "paintpalette.fill")
+                                .padding()
+                                .background(Material.thin)
+                                .clipShape(Circle())
+                        }
+                        
+                        Button(action: centerCanvas) {
+                            Image(systemName: "location.circle.fill")
+                                .font(.title)
+                                .padding()
+                                .background(Material.thin)
+                                .clipShape(Circle())
+                        }
+                    }
+                    .padding()
                 }
             }
-            .navigationTitle("Heirloom Tree")
-            .navigationBarItems(trailing: Button(action: addPerson) {
-                Label("Add Root", systemImage: "plus")
-            })
+            .navigationTitle("Family Tree")
+            .navigationBarItems(trailing: Button(action: addRootPerson) { Label("Add Root", systemImage: "plus") })
             .sheet(item: $selectedPerson) { person in
                 PersonDetailView(person: person)
+            }
+            .sheet(isPresented: $showingGenSettings) {
+                GenerationSettingsView()
             }
         }
     }
     
-    private func addPerson() {
+    private func addRootPerson() {
         let newPerson = Person(context: viewContext)
         newPerson.id = UUID()
         newPerson.name = "New Relative"
-        newPerson.xPosition = 200 // Default Center-ish
-        newPerson.yPosition = 300
+        newPerson.generation = 0
         newPerson.dateOfBirth = Date()
-        saveContext()
+        
+        // Place relative to current screen center
+        let safeX = (UIScreen.main.bounds.width / 2 - offset.width) / scale
+        let safeY = (UIScreen.main.bounds.height / 2 - offset.height) / scale
+        newPerson.xPosition = safeX
+        newPerson.yPosition = safeY
+        
+        try? viewContext.save()
     }
     
-    private func saveContext() {
-        do { try viewContext.save() } catch { print(error) }
+    private func centerCanvas() {
+        withAnimation(.spring()) {
+            scale = 1.0
+            offset = .zero
+            lastScale = 1.0
+            lastOffset = .zero
+        }
     }
 }
