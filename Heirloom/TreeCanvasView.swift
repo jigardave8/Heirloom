@@ -42,9 +42,9 @@ struct TreeCanvasView: View {
                         .scaleEffect(scale)
                     
                     // LAYER 2: Connectors (Middle)
-                    // We must map nodes to connector lines safely
                     ForEach(people) { person in
                         let parentsArray = (person.parents as? Set<Person> ?? [])
+                        
                         ForEach(Array(parentsArray)) { parent in
                             CurvedConnector(
                                 start: CGPoint(x: parent.xPosition, y: parent.yPosition),
@@ -78,7 +78,7 @@ struct TreeCanvasView: View {
                     .scaleEffect(scale)
                     .offset(offset)
                 }
-                .contentShape(Rectangle()) // Capture touches on empty space
+                .contentShape(Rectangle())
                 
                 // --- GESTURES (Pan/Zoom) ---
                 .gesture(
@@ -90,6 +90,7 @@ struct TreeCanvasView: View {
                                 lastScale = val
                             }
                             .onEnded { _ in lastScale = 1.0 },
+                        
                         DragGesture()
                             .onChanged { val in
                                 let newOffset = CGSize(
@@ -132,7 +133,6 @@ struct TreeCanvasView: View {
     // --- TOOLBAR VIEW ---
     private var controlBar: some View {
         HStack(spacing: 16) {
-            // Add Button
             Button(action: addRootPerson) {
                 VStack(spacing: 4) {
                     Image(systemName: "person.badge.plus")
@@ -143,7 +143,6 @@ struct TreeCanvasView: View {
             }
             .buttonStyle(.borderedProminent)
             
-            // Link Button
             Button(action: toggleConnectionMode) {
                 VStack(spacing: 4) {
                     Image(systemName: isConnectingMode ? "xmark" : "link")
@@ -155,7 +154,6 @@ struct TreeCanvasView: View {
             .buttonStyle(.bordered)
             .tint(isConnectingMode ? .red : .blue)
             
-            // Color Settings
             Button(action: { showingGenSettings.toggle() }) {
                 Image(systemName: "paintpalette.fill")
                     .font(.title2)
@@ -164,7 +162,6 @@ struct TreeCanvasView: View {
                     .clipShape(Circle())
             }
             
-            // Reset View
             Button(action: centerView) {
                 Image(systemName: "location.fill")
                     .font(.title2)
@@ -185,52 +182,26 @@ struct TreeCanvasView: View {
     private func handleTap(on person: Person) {
         if isConnectingMode {
             if sourcePerson == nil {
-                // Set Parent
                 sourcePerson = person
             } else {
-                // Set Child (Create Link)
                 linkPeople(parent: sourcePerson!, child: person)
                 sourcePerson = nil
                 isConnectingMode = false
             }
         } else {
-            // Edit Details
             selectedPerson = person
         }
     }
     
     private func linkPeople(parent: Person, child: Person) {
-            // 1. Prevent connecting a person to themselves
-            guard parent != child else { return }
-
-            // 2. Prevent circular relationships (optional check, good for safety)
-            if parent.parents?.contains(child) == true {
-                print("Cannot connect: Child is already the Parent's ancestor!")
-                return
-            }
-            
-            // 3. Perform the connection with Error Handling
-            do {
-                // Manually add using key-value coding to ensure update triggers
-                let childrenKey = "children"
-                
-                // This line specifically crashes if "To Many" is not selected in Xcode
-                let childrenSet = parent.mutableSetValue(forKey: childrenKey)
-                childrenSet.add(child)
-                
-                // Auto-assign Generation Level
-                child.generation = Int16(parent.generation + 1)
-                
-                // Save changes
-                try viewContext.save()
-                print("Successfully linked \(parent.name ?? "") to \(child.name ?? "")")
-                
-            } catch {
-                print("CRITICAL ERROR: Could not link people.")
-                print("Reason: \(error.localizedDescription)")
-                print("Did you set Relationship Type to 'To Many' in the Data Model Inspector?")
-            }
-        }
+        guard parent != child else { return }
+        
+        parent.addToChildrenSafely(child)
+        child.generation = Int16(parent.generation + 1)
+        
+        saveContext()
+    }
+    
     private func deletePerson(_ person: Person) {
         if sourcePerson == person { sourcePerson = nil }
         if selectedPerson == person { selectedPerson = nil }
@@ -246,7 +217,6 @@ struct TreeCanvasView: View {
         newPerson.generation = 0
         newPerson.dateOfBirth = Date()
         
-        // Place relative to current view
         let centerX = (UIScreen.main.bounds.width / 2 - offset.width) / scale
         let centerY = (UIScreen.main.bounds.height / 2 - offset.height) / scale
         
@@ -286,16 +256,9 @@ struct TreeCanvasView: View {
 
 // --- CORE DATA EXTENSION ---
 extension Person {
-    /// Safe wrapper to add child using KVC (Key-Value Coding)
-    /// Used because "addToChildren" might not be generated depending on build settings
     func addToChildrenSafely(_ child: Person) {
-        // The Key Must match CoreData 'children' relationship name
         let key = "children"
-        
-        // Get the current set of children
         let currentChildren = self.mutableSetValue(forKey: key)
-        
-        // Add the new child
         currentChildren.add(child)
     }
 }

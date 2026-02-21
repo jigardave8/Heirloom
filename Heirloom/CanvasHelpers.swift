@@ -8,7 +8,7 @@
 import SwiftUI
 import CoreData
 
-// 1. Draggable Node
+// 1. Draggable Node with Context Menu and New Linker States
 struct DraggablePersonNode: View {
     @ObservedObject var person: Person
     
@@ -20,11 +20,11 @@ struct DraggablePersonNode: View {
     
     // Callbacks
     var onSelect: () -> Void
-    var onDelete: () -> Void // <--- Added for deletion logic
+    var onDelete: () -> Void // For Context Menu Deletion
     
     @Environment(\.managedObjectContext) var viewContext
     
-    // Internal State
+    // Internal State for drag calculation
     @State private var dragOffset: CGSize = .zero
     
     var body: some View {
@@ -49,7 +49,7 @@ struct DraggablePersonNode: View {
                 .offset(y: 4)
         }
         .frame(width: 80, height: 80)
-        // Selection Styling
+        // Container Styling
         .background(
             ZStack {
                 Circle()
@@ -58,28 +58,27 @@ struct DraggablePersonNode: View {
                     .stroke(isSelectedSource ? Color.green : color, lineWidth: isSelectedSource ? 4 : 2)
             }
         )
-        // Highlight/Glow if active source
+        // Highlight/Glow effect
         .shadow(color: isSelectedSource ? .green.opacity(0.5) : .clear, radius: 10)
         .scaleEffect(isSelectedSource ? 1.2 : 1.0)
         .animation(.spring(), value: isSelectedSource)
         
-        // --- Position on Infinite Canvas ---
+        // Position on Infinite Canvas
         .position(x: person.xPosition + dragOffset.width,
                   y: person.yPosition + dragOffset.height)
         
-        // --- Interactions ---
+        // Interactions
         .onTapGesture {
             onSelect()
         }
         .contextMenu {
-            // Context Menu for actions
             Button(role: .destructive) {
                 onDelete()
             } label: {
                 Label("Delete Person", systemImage: "trash")
             }
         }
-        // Logic: Dragging is disabled when Linking
+        // Gesture: Disable drag when in connecting mode
         .gesture(
             isConnecting ? nil : DragGesture()
                 .onChanged { value in
@@ -108,9 +107,7 @@ struct CurvedConnector: Shape {
         path.move(to: start)
         
         // Professional S-Curve Algorithm
-        let deltaX = abs(end.x - start.x) * 0.5
         let deltaY = abs(end.y - start.y) * 0.5
-        // Using vertical hierarchy assumption (parent usually above)
         let control1 = CGPoint(x: start.x, y: start.y + deltaY)
         let control2 = CGPoint(x: end.x, y: end.y - deltaY)
         
@@ -119,17 +116,19 @@ struct CurvedConnector: Shape {
     }
 }
 
-// 3. Grid Background
+// 3. Grid Pattern Background
 struct GridPattern: Shape {
     let spacing: CGFloat = 50
     
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        for x in stride(from: 0, to: rect.maxX, by: spacing) {
+        // Vertical Lines
+        for x in stride(from: 0, through: rect.maxX, by: spacing) {
             path.move(to: CGPoint(x: x, y: rect.minY))
             path.addLine(to: CGPoint(x: x, y: rect.maxY))
         }
-        for y in stride(from: 0, to: rect.maxY, by: spacing) {
+        // Horizontal Lines
+        for y in stride(from: 0, through: rect.maxY, by: spacing) {
             path.move(to: CGPoint(x: rect.minX, y: y))
             path.addLine(to: CGPoint(x: rect.maxX, y: y))
         }
