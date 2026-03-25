@@ -14,14 +14,11 @@ struct PersonDetailView: View {
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.dismiss) var dismiss
 
-    // UI States
     @State private var inputName: String = ""
     @State private var generationLevel: Int = 0
     @State private var selectedTab = 0
-    
-    
     @State private var showPhotoPicker = false
-
+    @State private var isLinkingPartner = false
 
     var body: some View {
         NavigationStack {
@@ -66,15 +63,21 @@ struct PersonDetailView: View {
                 generationLevel = Int(person.generation)
             }
         }
+        // FIX: Removed incorrect conditional check here, now passes the non-optional 'person'
+        .sheet(isPresented: $isLinkingPartner) {
+            PartnerSelectionView(
+                personA: person,
+                isLinkingPartner: $isLinkingPartner
+            )
+        }
     }
 
     // MARK: - Extracted Views
     private var headerSection: some View {
         HStack {
-            Circle()
-                .fill(Color.gray.opacity(0.2))
-                .frame(width: 80, height: 80)
-                .overlay(Image(systemName: "person.fill").font(.largeTitle).foregroundColor(.gray))
+            Button(action: { showPhotoPicker = true }) {
+                profileImageView
+            }
             
             VStack(alignment: .leading) {
                 TextField("Name", text: $inputName)
@@ -86,16 +89,38 @@ struct PersonDetailView: View {
                     .foregroundColor(.secondary)
             }
         }
+        .sheet(isPresented: $showPhotoPicker) {
+            Text("Implement Photo Picker for Profile Pic Here: Save to person.profilePicFileName").padding()
+        }
     }
-
+    
+    private var profileImageView: some View {
+        ZStack {
+            Circle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(width: 80, height: 80)
+            
+            if let fileName = person.profilePicFileName {
+                Image(systemName: "person.crop.square.fill.and.at.rectangle")
+                    .font(.largeTitle)
+                    .foregroundColor(.gray)
+            } else {
+                Image(systemName: "person.fill.viewfinder")
+                    .font(.largeTitle)
+                    .foregroundColor(.gray)
+            }
+        }
+        .clipShape(Circle())
+    }
+    
     private var infoFormView: some View {
         Form {
             Section(header: Text("Life Events")) {
                 DatePicker("Birth Date", selection: dateBinding, displayedComponents: .date)
-                            
-                            // *** CHANGE THIS LINE ***
-                            DatePicker("Date of Death", selection: dateOfDeathBindingForPicker, displayedComponents: .date)
-                                .datePickerStyle(.compact)
+                
+                // FIX: MUST use the wrapper binding to handle optional date conversion for the picker
+                DatePicker("Date of Death", selection: dateOfDeathBindingForPicker, displayedComponents: .date)
+                    .datePickerStyle(.compact)
                 
                 HStack {
                     Text("Generation Level")
@@ -116,10 +141,10 @@ struct PersonDetailView: View {
                         Spacer()
                         Button("Unlink", role: .destructive) { unlinkPartner(partner) }
                     }
-                } else {
-                    Text("Use the 'Connect' mode on the Tree Canvas to link a Partner/Spouse.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                } else if !isLinkingPartner {
+                    Button("Link New Partner") {
+                        isLinkingPartner = true
+                    }
                 }
             }
             
@@ -136,34 +161,17 @@ struct PersonDetailView: View {
     private var formattedBirthDate: String { person.dateOfBirth?.formatted(date: .abbreviated, time: .omitted) ?? "Unknown" }
 
     private var dateBinding: Binding<Date> {
-        Binding<Date>(
-            get: { person.dateOfBirth ?? Date() },
-            set: { person.dateOfBirth = $0 }
-        )
+        Binding<Date>(get: { person.dateOfBirth ?? Date() }, set: { person.dateOfBirth = $0 })
     }
     
-    private var deathDateBinding: Binding<Date?> { // <-- THIS IS CORRECT (Returns Optional)
-          Binding<Date?>(
-              get: { person.dateOfDeath },
-              set: { person.dateOfDeath = $0 }
-          )
-      }
-      
-      // ADD THIS NEW HELPER FUNCTION TO FIX THE ERROR:
-      private var dateOfDeathBindingForPicker: Binding<Date> {
-          Binding<Date>(
-              get: {
-                  // If person.dateOfDeath is nil, use now. This satisfies the non-optional requirement.
-                  return person.dateOfDeath ?? Date()
-              },
-              set: { newValue in
-                  // When the user changes the date, set the person's *optional* date to that new date.
-                  // If the user clears the date later, we need a way to set it to nil,
-                  // which requires more advanced UI or logic than a standard optional DatePicker.
-                  person.dateOfDeath = newValue
-              }
-          )
-      }
+    // FIX APPLIED HERE: Correct wrapper binding to satisfy DatePicker's non-optional requirement
+    private var dateOfDeathBindingForPicker: Binding<Date> {
+        Binding<Date>(
+            get: { person.dateOfDeath ?? Date() },
+            set: { person.dateOfDeath = $0 }
+        )
+    }
+
     private var bioBinding: Binding<String> {
         Binding<String>(
             get: { return self.person.desc ?? "" },
@@ -189,5 +197,52 @@ struct PersonDetailView: View {
 extension Person {
     var partnersArray: [Person]? {
         return partners?.allObjects as? [Person]
+    }
+}
+
+// --- NEW HELPER VIEW: Partner Selection ---
+struct PartnerSelectionView: View {
+    @Environment(\.managedObjectContext) var viewContext
+    @Environment(\.dismiss) var dismiss
+    
+    @FetchRequest(
+        sortDescriptors: [NSSortDescriptor(keyPath: \Person.name, ascending: true)],
+        animation: .default
+    )
+    private var allPeople: FetchedResults<Person>
+    
+    @ObservedObject var personA: Person
+    @Binding var isLinkingPartner: Bool
+    
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(allPeople) { potentialPartner in
+                    if potentialPartner != personA && !(personA.partnersArray?.contains(potentialPartner) ?? false) {
+                        
+                        Button(action: { linkPartner(partnerB: potentialPartner) }) {
+                            HStack {
+                                Text(potentialPartner.name ?? "Unknown")
+                                Spacer()
+                                Text("Gen \(potentialPartner.generation)")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Select Partner for \(personA.name ?? "Self")")
+            .navigationBarItems(trailing: Button("Cancel") { isLinkingPartner = false })
+        }
+    }
+    
+    private func linkPartner(partnerB: Person) {
+        // Set the bidirectional link for 'partners' relationship
+        personA.mutableSetValue(forKey: "partners").add(partnerB)
+        partnerB.mutableSetValue(forKey: "partners").add(personA)
+        
+        try? viewContext.save()
+        
+        isLinkingPartner = false
     }
 }

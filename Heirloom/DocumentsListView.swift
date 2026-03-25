@@ -13,12 +13,11 @@ struct DocumentsListView: View {
     @ObservedObject var person: Person
     @Environment(\.managedObjectContext) var viewContext
     
-    // File Importer State
     @State private var isImporting: Bool = false
     
     var body: some View {
         VStack {
-            // Header
+           
             HStack {
                 Text("Books & Documents")
                     .font(.headline)
@@ -29,21 +28,17 @@ struct DocumentsListView: View {
             }
             .padding()
             
-            // List of Documents
+            // --- UPDATED: LIST ONLY SHOWS TYPE 'pdf' ---
             List {
-                ForEach(person.memoriesArray ?? []) { memory in
-                    // Only show PDF/Document types
-                    if memory.type == "pdf" {
-                        NavigationLink(destination: PDFPreviewView(fileName: memory.fileName ?? "")) {
-                            HStack {
-                                Image(systemName: "book.closed.fill")
-                                    .foregroundColor(.orange)
-                                VStack(alignment: .leading) {
-                                    Text(memory.title ?? "Untitled Document")
-                                        .font(.headline)
-                                    Text(memory.dateAdded?.formatted(date: .abbreviated, time: .omitted) ?? "")
-                                        .font(.caption)
-                                }
+                ForEach((person.memories as? Set<Memory> ?? []).filter { $0.type == "pdf" }, id: \.self) { memory in
+                    NavigationLink(destination: PDFPreviewView(fileName: memory.fileName ?? "")) {
+                        HStack {
+                            Image(systemName: "book.closed.fill").foregroundColor(.orange)
+                            VStack(alignment: .leading) {
+                                Text(memory.title ?? "Untitled Document")
+                                    .font(.headline)
+                                Text(memory.dateAdded?.formatted(date: .abbreviated, time: .omitted) ?? "")
+                                    .font(.caption)
                             }
                         }
                     }
@@ -51,31 +46,26 @@ struct DocumentsListView: View {
                 .onDelete(perform: deleteMemory)
             }
         }
-        // File Picker Configuration
         .fileImporter(
             isPresented: $isImporting,
-            allowedContentTypes: [.pdf], // Allow PDFs (can add .plainText, etc.)
+            allowedContentTypes: [.pdf],
             allowsMultipleSelection: false
         ) { result in
             do {
                 guard let selectedFile: URL = try result.get().first else { return }
                 
-                // 1. Security Access (Sandboxed)
                 if selectedFile.startAccessingSecurityScopedResource() {
                     defer { selectedFile.stopAccessingSecurityScopedResource() }
                     
-                    // 2. Read Data
                     let fileData = try Data(contentsOf: selectedFile)
                     
-                    // 3. Save using MediaManager
+                    // Save as PDF
                     if let savedName = MediaManager.shared.saveMedia(data: fileData, extensionType: "pdf") {
-                        
-                        // 4. Save to CoreData
                         let newDoc = Memory(context: viewContext)
                         newDoc.id = UUID()
                         newDoc.dateAdded = Date()
                         newDoc.type = "pdf"
-                        newDoc.title = selectedFile.lastPathComponent // "MyBook.pdf"
+                        newDoc.title = selectedFile.lastPathComponent
                         newDoc.fileName = savedName
                         newDoc.person = person
                         
@@ -89,8 +79,11 @@ struct DocumentsListView: View {
     }
     
     private func deleteMemory(offsets: IndexSet) {
+        // NOTE: Deleting the Memory CoreData object DOES NOT delete the file from the file system!
+        // You should add a deletion step here that calls MediaManager.shared.deleteMedia(fileName: ...)
+        
         withAnimation {
-            offsets.map { (person.memoriesArray ?? [])[$0] }.forEach(viewContext.delete)
+            offsets.map { (person.memories as? Set<Memory> ?? []).filter { $0.type == "pdf" }[$0] }.forEach(viewContext.delete)
             try? viewContext.save()
         }
     }

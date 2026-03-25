@@ -45,6 +45,7 @@ struct TreeCanvasView: View {
                     ForEach(people) { person in
                         // 1. DRAW CHILD CONNECTIONS (Parent -> Child)
                         let parentsArray = (person.parents as? Set<Person> ?? [])
+                        
                         ForEach(Array(parentsArray)) { parent in
                             CurvedConnector(
                                 start: CGPoint(x: parent.xPosition, y: parent.yPosition),
@@ -56,9 +57,9 @@ struct TreeCanvasView: View {
                             )
                         }
                         
-                        // 2. DRAW PARTNER CONNECTIONS (Spouse)
+                        // 2. DRAW PARTNER CONNECTIONS (Spouse) - Horizontal Line
                         if let partner = person.partnersArray?.first,
-                           person.xPosition < partner.xPosition {
+                           person.xPosition < partner.xPosition { // Draw only once per pair
                             CurvedConnector(
                                 start: CGPoint(x: person.xPosition, y: person.yPosition - 40),
                                 end: CGPoint(x: partner.xPosition, y: partner.yPosition - 40)
@@ -133,7 +134,7 @@ struct TreeCanvasView: View {
         }
     }
     
-    // --- TOOLBAR VIEW ---
+    // --- TOOLBAR VIEW (UNCHANGED FROM LAST) ---
     private var controlBar: some View {
         HStack(spacing: 16) {
             Button(action: addRootPerson) {
@@ -170,7 +171,7 @@ struct TreeCanvasView: View {
         .padding(.bottom, 20)
     }
     
-    // --- ACTIONS ---
+    // --- ACTIONS (UNCHANGED) ---
     private func handleTap(on person: Person) {
         if isConnectingMode {
             if sourcePerson == nil {
@@ -241,7 +242,7 @@ struct TreeCanvasView: View {
         do { try viewContext.save() } catch { print("Error saving: \(error.localizedDescription)") }
     }
     
-    // --- AUTO-LAYOUT LOGIC (UPDATED FOR SPOUSE HANDLING) ---
+    // --- AUTO-LAYOUT LOGIC (MAJOR UPDATE) ---
     
     private func triggerAutoLayout() {
         guard !people.isEmpty else { return }
@@ -260,65 +261,75 @@ struct TreeCanvasView: View {
     }
 
     private func calculateTreeLayout() -> [Person: CGPoint] {
-        var layout: [Person: CGPoint] = [:]
-        let allPeople = Array(people.sorted(by: { $0.generation < $1.generation }))
-        
-        let verticalSpacing: CGFloat = 180.0 // Increased vertical gap for spouse line
-        let horizontalSpacing: CGFloat = 100.0
-        
-        // 1. Pass to assign generation-based X-position placeholder (Y is level index * verticalSpacing)
-        var peopleByGen: [Int16: [Person]] = [:]
-        for person in allPeople {
-            peopleByGen[person.generation, default: []].append(person)
-        }
-        
-        var currentTotalX: CGFloat = 0.0
-        
-        // 2. Process each generation level to place couples side-by-side
-        for (gen, var members) in peopleByGen.sorted(by: { $0.key < $1.key }) {
+            var layout: [Person: CGPoint] = [:]
+            // Sort all people primarily by Generation for processing level-by-level
+            let allPeople = Array(people.sorted(by: { $0.generation < $1.generation }))
             
-            var currentX: CGFloat = currentTotalX
-            var levelMembers: [Person] = []
+            let verticalSpacing: CGFloat = 180.0 // Space between family levels
+            let horizontalSpacing: CGFloat = 100.0 // Space between sibling/partner units
             
-            // Sort the group to put linked spouses/partners together
-            // Grouping logic: Find an unprocessed person, find their spouse, process them as a pair/block.
-            while let root = members.first(where: { !layout.keys.contains($0) }) {
-                levelMembers.append(root)
-                let spouses = (root.partners as? Set<Person> ?? []).filter { layout.keys.contains($0) == false && $0.generation == gen }
-                levelMembers.append(contentsOf: spouses)
+            var peopleByGen: [Int16: [Person]] = [:]
+            for person in allPeople {
+                peopleByGen[person.generation, default: []].append(person)
+            }
+            
+            var currentTotalX: CGFloat = 0.0
+            
+            // 2. Process each generation level to place couples side-by-side
+            for (gen, var members) in peopleByGen.sorted(by: { $0.key < $1.key }) {
                 
-                // Remove all processed members from the remaining pool
-                members.removeAll(where: { levelMembers.contains($0) })
+                var currentX: CGFloat = currentTotalX
+                var levelMembers: [Person] = []
+                
+                // Grouping Logic: Process unprocessed members at this level
+                while let root = members.first(where: { !layout.keys.contains($0) }) {
+                    levelMembers.append(root)
+                    
+                    // Find Spouse(s) attached to this root person at the same generation level
+                    let spouses = (root.partners as? Set<Person> ?? []).filter { spouse in
+                         spouse.generation == gen && !layout.keys.contains(spouse)
+                    }
+                    levelMembers.append(contentsOf: spouses)
+                    
+                    // Temporarily mark the whole group as being processed (prevents infinite loops/re-processing)
+                    layout[root] = CGPoint(x: 0, y: CGFloat(gen))
+                    for spouse in spouses {
+                        layout[spouse] = CGPoint(x: 0, y: CGFloat(gen))
+                    }
+                    
+                    // Remove all members just placed from the remaining pool for this generation level
+                    members.removeAll(where: { levelMembers.contains($0) })
+                }
+                
+                // 3. Assign final X/Y positions based on the calculated block
+                let groupWidth = CGFloat(levelMembers.count) * horizontalSpacing
+                let startX = currentX - (groupWidth / 2) // Center the group block
+                let baseY = CGFloat(gen) * verticalSpacing
+                
+                for (index, person) in levelMembers.enumerated() {
+                    // Assign X position, spaced out horizontally within their spouse/sibling group
+                    let xPos = startX + (CGFloat(index) * horizontalSpacing)
+                    layout[person] = CGPoint(x: xPos, y: baseY)
+                }
+                
+                // Advance the starting X offset for the next generation block
+                currentTotalX = groupWidth + horizontalSpacing
             }
             
-            // 3. Assign final X/Y positions to the block of people in this level
-            let groupWidth = CGFloat(levelMembers.count) * horizontalSpacing
-            let startX = currentX - (groupWidth / 2) // Center the group around the previous offset
-            let baseY = CGFloat(gen) * verticalSpacing
-            
-            for (index, person) in levelMembers.enumerated() {
-                layout[person] = CGPoint(x: startX + (CGFloat(index) * horizontalSpacing), y: baseY)
-            }
-            
-            // Advance the offset for the next generation
-            currentTotalX += groupWidth + horizontalSpacing
+            return layout
         }
-        
-        return layout
-    }
     
     private func distributeSubtree(person: Person, layout: inout [Person: CGPoint], horizontalSpacing: CGFloat, verticalSpacing: CGFloat) {
-        // Recursive function remains the same: Child Y = Parent Y + VerticalSpacing
-        
+        // Recursive function for Children (Simplified for cleaner main path layout)
         let children = (person.children as? Set<Person> ?? []).filter { child in
-            (child.parents as? Set<Person> ?? []).count == 1 && (child.parents as? Set<Person> == [person])
+            (child.parents as? Set<Person> ?? []).count <= 1 && !layout.keys.contains(child)
         }
         
         if !children.isEmpty {
             let childCount = CGFloat(children.count)
             let totalBranchWidth = (childCount - 1) * horizontalSpacing
             let parentX = layout[person]?.x ?? 0
-            let childY = (layout[person]?.y ?? 0) + verticalSpacing // This Y value will be overridden by the top-level loop, but we use it for relative positioning if needed.
+            let childY = (layout[person]?.y ?? 0) + verticalSpacing
             
             let startX = parentX - (totalBranchWidth / 2)
             
@@ -326,6 +337,7 @@ struct TreeCanvasView: View {
             
             for (index, child) in sortedChildren.enumerated() {
                 let childX = startX + (CGFloat(index) * horizontalSpacing)
+                // Temporarily place children Y to allow the next iteration to calculate position correctly
                 layout[child] = CGPoint(x: childX, y: childY)
                 
                 distributeSubtree(person: child, layout: &layout, horizontalSpacing: horizontalSpacing, verticalSpacing: verticalSpacing)
@@ -333,6 +345,7 @@ struct TreeCanvasView: View {
         }
     }
 }
+
 // --- CORE DATA EXTENSION (MUST BE AT THE END OF THE FILE) ---
 extension Person {
     func addToChildrenSafely(_ child: Person) {
